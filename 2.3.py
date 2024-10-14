@@ -1,14 +1,16 @@
+import os
+
+import pandas as pd
+from rasterio.windows import Window
 import numpy as np
 import rasterio
 from scipy.ndimage import sobel
 import networkx as nx
-from rasterio.windows import Window
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.spatial import distance
 import heapq
 import cupy as cp  # 使用CuPy进行GPU加速
-import os
 
 # 里程加权系数
 mileage_weights = {
@@ -20,174 +22,19 @@ mileage_weights = {
     (2, 90): np.sqrt(2) + 1,
 }
 
+# 读取TIFF文件
+def read_map(file_path):
+    with rasterio.open(file_path) as src:
+        elevation_data = src.read(1)
+    return elevation_data, src
 
-def get_next_states_for_theta_0(r, c, theta):
-    next_states = []
-    if  theta==0:
-    # 向前移动
-        if (r - 1, c) in valid_nodes:
-            next_states.append(((r - 1, c), 0))
-            next_states.append(((r - 1, c), 45))
-            next_states.append(((r - 1, c), 315))
-        # 左前方
-        if (r - 1, c -1) in valid_nodes:
-            next_states.append(((r - 1, c - 1), 315))
-            next_states.append(((r - 1, c - 1), 270))
-        # 右前方
-        if (r-1, c + 1) in valid_nodes:
-            next_states.append(((r-1, c + 1), 90))
-            next_states.append(((r - 1, c + 1), 45))
-    if  theta==45:
-    # 向前移动
-        if (r - 1, c) in valid_nodes:
-            next_states.append(((r - 1, c), 0))
-            next_states.append(((r - 1, c), 315))
-        # 右
-        if (r , c+1) in valid_nodes:
-            next_states.append(((r , c+1), 90))
-            next_states.append(((r , c+1), 135))
-        # 右前方
-        if (r-1, c + 1) in valid_nodes:
-            next_states.append(((r-1, c + 1), 90))
-            next_states.append(((r - 1, c + 1), 45))
-            next_states.append(((r - 1, c + 1), 0))
-
-    if  theta==90:
-    # 右前方
-        if (r - 1, c+1) in valid_nodes:
-            next_states.append(((r - 1, c+1), 0))
-            next_states.append(((r - 1, c+1), 45))
-
-        # 右
-        if (r  ,c +1) in valid_nodes:
-            next_states.append(((r , c + 1), 45))
-            next_states.append(((r , c + 1), 90))
-            next_states.append(((r, c + 1), 135))
-        # 右后方
-        if (r+1, c + 1) in valid_nodes:
-            next_states.append(((r+1, c + 1), 135))
-            next_states.append(((r+1, c + 1), 180))
-    if  theta==135:
-    # 向后移动
-        if (r + 1, c) in valid_nodes:
-            next_states.append(((r + 1, c), 180))
-            next_states.append(((r + 1, c), 225))
-
-        # 左前方
-        if (r, c +1) in valid_nodes:
-            next_states.append(((r, c +1), 45))
-            next_states.append(((r, c +1), 90))
-        # 右前方
-        if (r+1, c + 1) in valid_nodes:
-            next_states.append(((r+1, c + 1), 90))
-            next_states.append(((r + 1, c + 1), 135))
-            next_states.append(((r + 1, c + 1), 180))
-    if theta == 180:
-        # 向左后移动
-        if (r + 1, c-1) in valid_nodes:
-            next_states.append(((r + 1, c-1), 270))
-            next_states.append(((r + 1, c-1), 225))
-
-        # 后
-        if (r + 1, c) in valid_nodes:
-            next_states.append(((r + 1, c), 135))
-            next_states.append(((r + 1, c), 180))
-            next_states.append(((r + 1, c), 225))
-        # 右后方
-        if (r + 1, c + 1) in valid_nodes:
-            next_states.append(((r + 1, c + 1), 90))
-            next_states.append(((r + 1, c + 1), 135))
-    if theta == 225:
-        # 向左后移动
-        if (r + 1, c-1) in valid_nodes:
-            next_states.append(((r + 1, c-1), 180))
-            next_states.append(((r + 1, c-1), 225))
-            next_states.append(((r + 1, c - 1), 270))
-        # 左方
-        if (r, c - 1) in valid_nodes:
-            next_states.append(((r, c - 1), 270))
-            next_states.append(((r, c - 1), 315))
-        # 后方
-        if (r + 1, c ) in valid_nodes:
-            next_states.append(((r + 1, c ), 135))
-            next_states.append(((r + 1, c ), 180))
-    if theta == 270:
-        # 向左后移动
-        if (r + 1, c-1) in valid_nodes:
-            next_states.append(((r + 1, c-1), 180))
-            next_states.append(((r + 1, c-1), 225))
-        # 左方
-        if (r, c - 1) in valid_nodes:
-            next_states.append(((r, c - 1), 270))
-            next_states.append(((r, c - 1), 315))
-            next_states.append(((r, c - 1), 225))
-        # 左前方
-        if (r - 1, c-1 ) in valid_nodes:
-
-            next_states.append(((r - 1, c-1 ), 0))
-            next_states.append(((r - 1, c - 1), 315))
-    if theta == 315:
-        # 向左移动
-        if (r , c - 1) in valid_nodes:
-            next_states.append(((r , c - 1), 270))
-            next_states.append(((r , c - 1), 225))
-        # 左前方
-        if (r-1, c - 1) in valid_nodes:
-            next_states.append(((r, c - 1), 270))
-            next_states.append(((r, c - 1), 315))
-            next_states.append(((r, c - 1), 0))
-        # 前方
-        if (r , c - 1) in valid_nodes:
-            next_states.append(((r - 1, c - 1), 0))
-            next_states.append(((r - 1, c - 1), 45))
-    return next_states
-
-
-def create_graph_from_slope(slope_data, speed_profile, cell_size=5):
-    global valid_nodes
-    rows, cols = slope_data.shape
-    G = nx.DiGraph()
-
-    # 将数据移到GPU上处理
-    slope_data_gpu = cp.array(slope_data)
-
-    # 仅添加斜率小于一定阈值的节点
-    valid_nodes = set([(r, c) for r in range(rows) for c in range(cols) if slope_data[r, c] < 30])
-
-    # 创建带有车头朝向的节点
-    for r in range(rows):
-        for c in range(cols):
-            if (r, c) in valid_nodes:
-                for theta in [0, 45, 90, 135, 180, 225, 270, 315]:
-                    G.add_node((r, c, theta), slope=slope_data[r, c])
-
-    # 创建边
-    for r, c in valid_nodes:
-        for theta in [0, 45, 90, 135, 180, 225, 270, 315]:
-
-            next_states = get_next_states_for_theta_0(r, c, theta)
-
-            for ((nr, nc), ntheta) in next_states:
-                distance = calculate_single_cell_distance(abs(nc - c), abs(nr - r), ntheta, cell_size)
-                speed = speed_model(slope_data_gpu[nr, nc], speed_profile)
-                if speed is not None:
-                    G.add_edge((r, c, theta), (nr, nc, ntheta), weight=distance / speed)
-
-    return G
-
-# 使用CuPy处理大型数组
+# 计算坡度
 def calculate_slope(elevation_data, cell_size=5):
     elevation_data = cp.asarray(elevation_data)
     dzdx = cp.gradient(elevation_data, axis=1) / cell_size
     dzdy = cp.gradient(elevation_data, axis=0) / cell_size
     slope = cp.arctan(cp.sqrt(dzdx ** 2 + dzdy ** 2)) * (180 / cp.pi)
     return slope.get()  # 将结果从GPU内存转回主机内存
-
-# 读取TIFF文件
-def read_map(file_path):
-    with rasterio.open(file_path) as src:
-        elevation_data = src.read(1)
-    return elevation_data, src
 
 # 定义速度模型
 def speed_model(slope, speed_profile):
@@ -214,15 +61,42 @@ def calculate_single_cell_distance(delta_x, delta_y, delta_theta, cell_size=5):
     distance = mileage_weights.get((delta_l, delta_theta), 0) * cell_size / 1000
     return distance
 
-# 新的启发式函数
-def adjusted_heuristic(current, goal, slope_data):
-    euclidean_distance = distance.euclidean(current, goal)
-    # 获取当前节点和目标节点之间的平均斜率
+# 创建图
+def create_graph_from_slope(slope_data, speed_profile, cell_size=5):
+    rows, cols = slope_data.shape
+    G = nx.DiGraph()
 
-    # 距离目标越近，权重越大，这里使用距离的倒数作为权重因子
-    proximity_weight = 1 / (euclidean_distance + 1)  # 防止除以零，加1
-    # 将距离的倒数作为权重，乘以调整因子
-    return euclidean_distance * proximity_weight
+    for r in range(rows):
+        for c in range(cols):
+            G.add_node((r, c), slope=slope_data[r, c])
+
+    for r in range(rows):
+        for c in range(cols):
+            if slope_data[r, c] < 30:
+                # 只连接四个直接邻居
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nr, nc = r + dr, c + dc
+                    if nr >= 0 and nr < rows and nc >= 0 and nc < cols and slope_data[nr, nc] < 30:
+                        angle = 0 if dc == 0 else 90
+                        G.add_edge((r, c), (nr, nc),
+                                   weight=calculate_single_cell_distance(abs(dc), abs(dr), angle, cell_size))
+
+    return G
+
+# 启发式函数
+def adjusted_heuristic(a, b, slope_data):
+    # 计算两点之间的欧几里得距离
+    euclidean_distance = distance.euclidean(a, b)
+
+    # 获取两点的平均斜率
+    avg_slope = (slope_data[a] + slope_data[b]) / 2
+
+    # 根据平均斜率调整启发式值
+    # 这里假设斜率越大，调整系数越大，即路径越困难
+    adjustment_factor = 1 + avg_slope / 100  # 假设斜率最大为100%
+
+    # 返回调整后的启发式值
+    return euclidean_distance * adjustment_factor
 
 # A*算法
 def a_star_search(graph, start, goal, heuristic=None):
@@ -268,93 +142,104 @@ def visualize_results(slope_data, path, title):
     ax = fig.add_subplot(111, projection='3d')
     X, Y = np.meshgrid(range(slope_data.shape[1]), range(slope_data.shape[0]))
     surf = ax.plot_surface(X, Y, slope_data, cmap='viridis', edgecolor='none')
-    ax.plot3D([p[1] for p in path], [p[0] for p in path], [slope_data[p] for p in path], color='r')
+
+    # 仅绘制路径中在裁剪区域内的点
+    valid_path = [p for p in path if 0 <= p[0] < slope_data.shape[0] and 0 <= p[1] < slope_data.shape[1]]
+    ax.plot3D([p[1] for p in valid_path], [p[0] for p in valid_path], [slope_data[p] for p in valid_path], color='r')
+
     ax.set_title(title)
     ax.set_xlabel('X axis')
     ax.set_ylabel('Y axis')
     ax.set_zlabel('Slope (%)')
     plt.show()
 
-# 分割TIFF文件
-def split_tiff(input_tiff, output_dir, block_size=(2048,2048)):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+def crop_tiff_to_path_area(src, start, end):
+    # 确保起点和终点在图像的边界内
+    start_row = max(0, min(start[0], src.height - 1))
+    start_col = max(0, min(start[1], src.width - 1))
+    end_row = max(0, min(end[0], src.height - 1))
+    end_col = max(0, min(end[1], src.width - 1))
 
-    with rasterio.open(input_tiff) as src:
-        width, height = src.width, src.height
-        num_blocks_w = int(width / block_size[0]) + 1
-        num_blocks_h = int(height / block_size[1]) + 1
+    # 计算裁剪窗口的边界
+    row_start = min(start_row, end_row)
+    col_start = min(start_col, end_col)
+    row_end = max(start_row, end_row)
+    col_end = max(start_col, end_col)
 
-        for i in range(num_blocks_h):
-            for j in range(num_blocks_w):
-                w = Window(j * block_size[0], i * block_size[1], min(block_size[0], width - j * block_size[0]), min(block_size[1], height - i * block_size[1]))
+    # 确保窗口尺寸非负
+    window_width = max(0, row_end - row_start + 1)
+    window_height = max(0, col_end - col_start + 1)
 
-                block = src.read(window=w)
+    # 创建裁剪窗口
+    window = Window(col_start, row_start, window_width, window_height)
 
-                profile = src.profile.copy()
-                profile.update({
-                    'height': block.shape[1],
-                    'width': block.shape[2],
-                    'transform': rasterio.windows.transform(w, src.transform),
-                })
+    # 裁剪TIFF文件
+    cropped_data = src.read(1, window=window)
 
-                out_file = os.path.join(output_dir, f'block_{i}_{j}.tif')
-                with rasterio.open(out_file, 'w', **profile) as dst:
-                    dst.write(block)
+    # 返回裁剪后的数据和窗口信息
+    return cropped_data, window
+coordinates = {
 
-# 主函数
+
+    "Z9": {
+        "start": (7054, 410),
+        "end": [(5333, 8223)]
+    }
+}
+
+
 def main():
     file_path = 'map.tif'
-    output_dir = 'blocks'
-    block_size = (256,256)
+    all_paths = []  # 用于存储所有路径的列表
+    for key, value in coordinates.items():
+        start = value['start']
+        # 现在end是一个坐标点列表，我们将对每个终点分别处理
+        for end in value['end']:
 
-    # 分割TIFF文件
-    split_tiff(file_path, output_dir, block_size)
 
-    # 遍历每个分割后的TIFF文件
-    for tiff_block in os.listdir(output_dir):
-        if tiff_block.endswith('.tif'):
-            # 读取分割后的TIFF文件块
-            elevation_data, src = read_map(os.path.join(output_dir, tiff_block))
+            # 读取TIFF文件
+            with rasterio.open(file_path) as src:
+                # 裁剪TIFF文件到路径区域
+                cropped_data, window = crop_tiff_to_path_area(src, start, end)
 
-            # 计算块的位置
-            i, j = map(int, tiff_block.replace('.tif', '').replace('block_', '').split('_'))
-            block_row_start = i * block_size[0]
-            block_col_start = j * block_size[1]
+                # 计算斜率数据
+                slope_data = calculate_slope(cropped_data)
 
-            # 计算斜率数据
-            slope_data = calculate_slope(elevation_data)
+                # 定义速度模型
+                speed_profile = {
+                    (0, 10): 30,
+                    (10, 20): 20,
+                    (20, 30): 10
+                }
 
-            # 定义速度模型
-            speed_profile = {
-                (0, 10): 30,
-                (10, 20): 20,
-                (20, 30): 10
-            }
+                # 创建图
+                G = create_graph_from_slope(slope_data, speed_profile)
 
-            # 创建图
-            G = create_graph_from_slope(slope_data, speed_profile)
+                # 调整起点和终点到裁剪区域的坐标
+                start_in_cropped = (start[1] - window.col_off, start[0] - window.row_off)
+                end_in_cropped = (end[1] - window.col_off, end[0] - window.row_off)
 
-            # 调整起点和终点
-            start = (100- block_row_start, 100 - block_col_start)
-            end = (200 - block_row_start, 200 - block_col_start)
+                # A* 搜索
+                came_from, _ = a_star_search(G, start_in_cropped, end_in_cropped, heuristic=lambda a, b: adjusted_heuristic(a, b, slope_data))
+                path = reconstruct_path(came_from, start_in_cropped, end_in_cropped)
+                if start[0]<end[0]and start[1]>=end[1]:
+                    revised_path = [(c + window.row_off, r + window.col_off) for (r, c) in path]
+                # 修订路径坐标为原始TIFF文件中的坐标
+                #revised_path = [(r + window.row_off, c + window.col_off) for (r, c) in path]
+                else:
+                    revised_path = [(r + window.row_off, c + window.col_off) for (r, c) in path]
+                # 输出修订后的路径
+                all_paths.append((key, revised_path))
 
-            # 确保起点和终点在块内
-            if start[0] < 0 or start[0] >= slope_data.shape[0] or start[1] < 0 or start[1] >= slope_data.shape[1]:
-                start = (0, 0)  # 如果不在块内，则设置为块的左上角
-            if end[0] < 0 or end[0] >= slope_data.shape[0] or end[1] < 0 or end[1] >= slope_data.shape[1]:
-                end = (slope_data.shape[0] - 1, slope_data.shape[1] - 1)  # 如果不在块内，则设置为块的右下角
-
-            # A* 搜索
-            came_from, _ = a_star_search(G, start, end, heuristic=lambda a, b: adjusted_heuristic(a, b, slope_data))
-            path = reconstruct_path(came_from, start, end)
-
-            print(f"在文件 {tiff_block} 中找到的路径:", path)
-
-            visualize_results(slope_data, path, f"Optimal Path on Slope Map using A* Algorithm ({tiff_block})")
+# 将所有路径转换为DataFrame
+    paths_df = pd.DataFrame(all_paths, columns=['Path_ID', 'Coordinates'])
+    # 将坐标转换为两列：X和Y
+    paths_df['X'] = paths_df['Coordinates'].apply(lambda x: [coord[1] for coord in x])
+    paths_df['Y'] = paths_df['Coordinates'].apply(lambda x: [coord[0] for coord in x])
+    # 保存为Excel文件
+    paths_df.to_excel('paths.xlsx', index=False)
+        # 可视化结果
+        #visualize_results(cropped_data,revised_path, "Optimal Path on Slope Map using A* Algorithm")
 
 if __name__ == '__main__':
     main()
-
-
-
